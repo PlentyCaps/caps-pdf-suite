@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Moon, Sun, FileText, Scissors, RefreshCw, Archive, Edit3, PenTool, ArrowRight, Github } from "lucide-react";
+import { Moon, Sun, FileText, Scissors, RefreshCw, Archive, Edit3, PenTool, ArrowRight, Github, ScanText } from "lucide-react";
 
 const features = [
   {
@@ -46,6 +46,13 @@ const features = [
     description: "Sign documents digitally and collect signatures with ease.",
     color: "from-teal-500 to-teal-600",
     href: "/sign",
+  },
+  {
+    icon: ScanText,
+    title: "OCR — Text Recognition",
+    description: "Extract text from scanned PDFs and images. Runs fully in your browser.",
+    color: "from-violet-500 to-violet-600",
+    href: "/ocr",
   },
 ];
 
