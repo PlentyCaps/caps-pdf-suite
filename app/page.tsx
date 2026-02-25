@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { Moon, Sun, FileText, Scissors, RefreshCw, Archive, Edit3, PenTool, ArrowRight, Github } from "lucide-react";
 
 const features = [
@@ -9,36 +10,42 @@ const features = [
     title: "Merge PDFs",
     description: "Combine multiple PDF files into one seamless document in seconds.",
     color: "from-blue-500 to-blue-600",
+    href: "/merge",
   },
   {
     icon: Scissors,
     title: "Split PDFs",
     description: "Extract pages or split large PDFs into smaller, manageable files.",
     color: "from-purple-500 to-purple-600",
+    href: null,
   },
   {
     icon: RefreshCw,
     title: "Convert PDFs",
     description: "Convert PDFs to Word, Excel, images, and more — or the other way around.",
     color: "from-green-500 to-green-600",
+    href: null,
   },
   {
     icon: Archive,
     title: "Compress PDFs",
     description: "Reduce file size without sacrificing quality. Share faster, store smarter.",
     color: "from-orange-500 to-orange-600",
+    href: null,
   },
   {
     icon: Edit3,
     title: "Edit PDFs",
     description: "Add text, annotations, and highlights directly to your PDF files.",
     color: "from-red-500 to-red-600",
+    href: null,
   },
   {
     icon: PenTool,
     title: "Sign PDFs",
     description: "Sign documents digitally and collect signatures with ease.",
     color: "from-teal-500 to-teal-600",
+    href: null,
   },
 ];
 
@@ -138,19 +145,26 @@ export default function Home() {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
               {features.map((feature) => {
                 const Icon = feature.icon;
-                return (
-                  <div
-                    key={feature.title}
-                    className="group bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl p-6 hover:border-gray-300 dark:hover:border-gray-700 hover:shadow-lg dark:hover:shadow-gray-900/50 transition-all duration-200 cursor-pointer"
-                  >
+                const cardContent = (
+                  <>
                     <div className={`w-12 h-12 bg-gradient-to-br ${feature.color} rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform duration-200`}>
                       <Icon className="w-6 h-6 text-white" />
                     </div>
                     <h3 className="font-semibold text-lg mb-2">{feature.title}</h3>
                     <p className="text-gray-600 dark:text-gray-400 text-sm leading-relaxed">{feature.description}</p>
-                    <div className="mt-4 flex items-center gap-1 text-sm font-medium text-gray-400 dark:text-gray-600 group-hover:text-gray-600 dark:group-hover:text-gray-400 transition-colors">
-                      Coming soon <ArrowRight className="w-3 h-3" />
+                    <div className="mt-4 flex items-center gap-1 text-sm font-medium transition-colors text-blue-500 group-hover:text-blue-400">
+                      {feature.href ? <>Try it <ArrowRight className="w-3 h-3" /></> : <>Coming soon <ArrowRight className="w-3 h-3" /></>}
                     </div>
+                  </>
+                );
+                const cardClass = "group bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl p-6 hover:border-gray-300 dark:hover:border-gray-700 hover:shadow-lg dark:hover:shadow-gray-900/50 transition-all duration-200 cursor-pointer text-left";
+                return feature.href ? (
+                  <Link key={feature.title} href={feature.href} className={cardClass}>
+                    {cardContent}
+                  </Link>
+                ) : (
+                  <div key={feature.title} className={cardClass}>
+                    {cardContent}
                   </div>
                 );
               })}
