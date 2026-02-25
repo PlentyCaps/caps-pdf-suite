@@ -17,7 +17,7 @@ const features = [
     title: "Split PDFs",
     description: "Extract pages or split large PDFs into smaller, manageable files.",
     color: "from-purple-500 to-purple-600",
-    href: null,
+    href: "/split",
   },
   {
     icon: RefreshCw,
