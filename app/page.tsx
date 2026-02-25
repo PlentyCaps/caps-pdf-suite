@@ -38,7 +38,7 @@ const features = [
     title: "Edit PDFs",
     description: "Add text, annotations, and highlights directly to your PDF files.",
     color: "from-red-500 to-red-600",
-    href: null,
+    href: "/edit",
   },
   {
     icon: PenTool,
