@@ -24,7 +24,7 @@ const features = [
     title: "Convert PDFs",
     description: "Convert PDFs to Word, Excel, images, and more — or the other way around.",
     color: "from-green-500 to-green-600",
-    href: null,
+    href: "/convert",
   },
   {
     icon: Archive,
