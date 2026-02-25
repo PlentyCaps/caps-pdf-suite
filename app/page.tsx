@@ -45,7 +45,7 @@ const features = [
     title: "Sign PDFs",
     description: "Sign documents digitally and collect signatures with ease.",
     color: "from-teal-500 to-teal-600",
-    href: null,
+    href: "/sign",
   },
 ];
 
