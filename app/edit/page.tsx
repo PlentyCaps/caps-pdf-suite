@@ -1,24 +1,35 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import {
   Edit3, Upload, X, Download, ArrowLeft, ChevronLeft,
-  ChevronRight, Loader2, CheckCircle, MessageSquare, Type, Trash2,
+  ChevronRight, Loader2, CheckCircle, MessageSquare, Type,
+  Trash2, ImageIcon, Move,
 } from "lucide-react";
 import Link from "next/link";
 
 /* ─── Types ───────────────────────────────────────────── */
 type AnnotKind = "text" | "comment";
+type ActiveTool = AnnotKind | "image";
 
 interface Annotation {
   id: string;
   pageIndex: number;
   kind: AnnotKind;
   text: string;
-  x: number; y: number;   // px relative to rendered page container
-  color: string;          // hex
-  fontSize: number;       // pt equivalent
+  x: number; y: number;
+  color: string;
+  fontSize: number;
+}
+
+interface ImageOverlay {
+  id: string;
+  pageIndex: number;
+  dataUrl: string;
+  mimeType: "png" | "jpg";
+  x: number; y: number;   // px relative to rendered page (at render resolution)
+  width: number;          // px at render resolution
 }
 
 interface PageInfo {
@@ -40,12 +51,9 @@ const COLORS = [
 ];
 const FONT_SIZES = [10, 12, 14, 18, 24];
 
-/* ─── Inline text editor popup ───────────────────────────*/
-function TextPopup({
-  x, y, onConfirm, onCancel, kind,
-}: {
-  x: number; y: number;
-  kind: AnnotKind;
+/* ─── Text popup ──────────────────────────────────────── */
+function TextPopup({ x, y, kind, onConfirm, onCancel }: {
+  x: number; y: number; kind: AnnotKind;
   onConfirm: (text: string, color: string, fontSize: number) => void;
   onCancel: () => void;
 }) {
@@ -63,49 +71,30 @@ function TextPopup({
         {kind === "comment" ? "💬 Add comment" : "T Add text"}
       </p>
       <textarea
-        autoFocus
-        value={text}
+        autoFocus value={text}
         onChange={(e) => setText(e.target.value)}
         placeholder={kind === "comment" ? "Type your comment…" : "Type your text…"}
         rows={3}
         className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 mb-3"
       />
       <div className="flex items-center gap-3 mb-3">
-        {/* Color */}
         <div className="flex gap-1.5">
           {COLORS.map((c) => (
-            <button
-              key={c.hex}
-              title={c.label}
-              onClick={() => setColor(c.hex)}
+            <button key={c.hex} title={c.label} onClick={() => setColor(c.hex)}
               className="w-5 h-5 rounded-full border-2 transition-all"
-              style={{
-                background: c.hex,
-                borderColor: color === c.hex ? "white" : "transparent",
-              }}
-            />
+              style={{ background: c.hex, borderColor: color === c.hex ? "white" : "transparent" }} />
           ))}
         </div>
-        {/* Font size */}
-        <select
-          value={fontSize}
-          onChange={(e) => setFontSize(Number(e.target.value))}
-          className="ml-auto bg-gray-800 border border-gray-700 rounded-lg px-2 py-1 text-xs focus:outline-none"
-        >
-          {FONT_SIZES.map((s) => (
-            <option key={s} value={s}>{s}pt</option>
-          ))}
+        <select value={fontSize} onChange={(e) => setFontSize(Number(e.target.value))}
+          className="ml-auto bg-gray-800 border border-gray-700 rounded-lg px-2 py-1 text-xs focus:outline-none">
+          {FONT_SIZES.map((s) => <option key={s} value={s}>{s}pt</option>)}
         </select>
       </div>
       <div className="flex gap-2 justify-end">
-        <button onClick={onCancel} className="px-3 py-1.5 text-sm text-gray-400 hover:text-gray-200 transition-colors">
-          Cancel
-        </button>
-        <button
-          onClick={() => text.trim() && onConfirm(text.trim(), color, fontSize)}
+        <button onClick={onCancel} className="px-3 py-1.5 text-sm text-gray-400 hover:text-gray-200 transition-colors">Cancel</button>
+        <button onClick={() => text.trim() && onConfirm(text.trim(), color, fontSize)}
           disabled={!text.trim()}
-          className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium transition-colors"
-        >
+          className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium transition-colors">
           Place
         </button>
       </div>
@@ -113,31 +102,118 @@ function TextPopup({
   );
 }
 
+/* ─── Image overlay ───────────────────────────────────── */
+function ImageOverlayEl({
+  overlay, displayScale, onRemove, onUpdate,
+}: {
+  overlay: ImageOverlay;
+  displayScale: number;
+  onRemove: () => void;
+  onUpdate: (patch: Partial<ImageOverlay>) => void;
+}) {
+  const [hovered, setHovered] = useState(false);
+  const dragStart = useRef<{ mx: number; my: number; ox: number; oy: number } | null>(null);
+
+  const onMouseDown = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    dragStart.current = { mx: e.clientX, my: e.clientY, ox: overlay.x, oy: overlay.y };
+
+    const onMove = (ev: MouseEvent) => {
+      if (!dragStart.current) return;
+      const dx = (ev.clientX - dragStart.current.mx) / displayScale;
+      const dy = (ev.clientY - dragStart.current.my) / displayScale;
+      onUpdate({ x: dragStart.current.ox + dx, y: dragStart.current.oy + dy });
+    };
+    const onUp = () => { dragStart.current = null; window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
+  const dispW = overlay.width * displayScale;
+  const dispH = dispW; // preserve square-ish; actual aspect corrected by object-contain
+
+  return (
+    <div
+      className="absolute select-none group"
+      style={{ left: overlay.x * displayScale, top: overlay.y * displayScale, width: dispW, zIndex: 20 }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      onClick={(e) => e.stopPropagation()}
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={overlay.dataUrl}
+        alt="overlay"
+        draggable={false}
+        className="w-full object-contain pointer-events-none"
+        style={{ display: "block" }}
+      />
+
+      {/* Drag handle */}
+      <div
+        onMouseDown={onMouseDown}
+        className={`absolute inset-0 cursor-move border-2 rounded transition-opacity ${hovered ? "border-red-500/70 opacity-100" : "border-transparent opacity-0"}`}
+      >
+        {hovered && (
+          <div className="absolute top-1 left-1 bg-black/50 rounded p-0.5">
+            <Move className="w-3 h-3 text-white" />
+          </div>
+        )}
+      </div>
+
+      {/* Delete */}
+      {hovered && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onRemove(); }}
+          className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 hover:bg-red-400 rounded-full flex items-center justify-center shadow"
+        >
+          <X className="w-3 h-3 text-white" />
+        </button>
+      )}
+
+      {/* Resize slider */}
+      {hovered && (
+        <div
+          className="absolute -bottom-8 left-0 right-0 flex items-center gap-1 bg-black/70 rounded-lg px-2 py-1"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <span className="text-[9px] text-gray-400 flex-shrink-0">Size</span>
+          <input
+            type="range" min={30} max={600} step={5}
+            value={overlay.width}
+            onChange={(e) => onUpdate({ width: Number(e.target.value) })}
+            className="flex-1 accent-red-500 h-1 cursor-pointer"
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ─── Main ─────────────────────────────────────────────── */
 export default function EditPage() {
-  const [file, setFile] = useState<File | null>(null);
-  const [fileName, setFileName] = useState("");
-  const [pages, setPages] = useState<PageInfo[]>([]);
+  const [file, setFile]           = useState<File | null>(null);
+  const [fileName, setFileName]   = useState("");
+  const [pages, setPages]         = useState<PageInfo[]>([]);
   const [currentPage, setCurrentPage] = useState(0);
   const [rendering, setRendering] = useState(false);
-  const [dragging, setDragging] = useState(false);
+  const [dropDragging, setDropDragging] = useState(false);
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
-  const [pending, setPending] = useState<{ x: number; y: number; kind: AnnotKind } | null>(null);
-  const [activeTool, setActiveTool] = useState<AnnotKind>("text");
+  const [images, setImages]       = useState<ImageOverlay[]>([]);
+  const [pending, setPending]     = useState<{ x: number; y: number; kind: AnnotKind } | null>(null);
+  const [activeTool, setActiveTool] = useState<ActiveTool>("text");
+  const [pendingImage, setPendingImage] = useState<{ dataUrl: string; mimeType: "png" | "jpg" } | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const pageRef = useRef<HTMLDivElement>(null);
+  const fileInputRef  = useRef<HTMLInputElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const pageRef       = useRef<HTMLDivElement>(null);
 
+  /* ── Load PDF ── */
   const loadFile = useCallback(async (f: File) => {
     if (f.type !== "application/pdf") return;
-    setFile(f);
-    setFileName(f.name);
-    setRendering(true);
-    setAnnotations([]);
-    setPages([]);
-    setCurrentPage(0);
-    setDownloadUrl(null);
+    setFile(f); setFileName(f.name); setRendering(true);
+    setAnnotations([]); setImages([]); setPages([]); setCurrentPage(0); setDownloadUrl(null);
     try {
       const { getDocument, GlobalWorkerOptions } = await import("pdfjs-dist");
       GlobalWorkerOptions.workerSrc = "/pdf.worker.mjs";
@@ -150,71 +226,71 @@ export default function EditPage() {
         const scale = Math.min(1.5, 900 / vp1.width);
         const viewport = page.getViewport({ scale });
         const canvas = document.createElement("canvas");
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
+        canvas.width = viewport.width; canvas.height = viewport.height;
         await page.render({ canvas, viewport }).promise;
-        rendered.push({
-          dataUrl: canvas.toDataURL("image/jpeg", 0.92),
-          widthPx: viewport.width,
-          heightPx: viewport.height,
-          scale,
-          widthPt: vp1.width,
-          heightPt: vp1.height,
-        });
+        rendered.push({ dataUrl: canvas.toDataURL("image/jpeg", 0.92), widthPx: viewport.width, heightPx: viewport.height, scale, widthPt: vp1.width, heightPt: vp1.height });
       }
       setPages(rendered);
     } catch { /* ignore */ }
     setRendering(false);
   }, []);
 
+  /* ── Load image file ── */
+  const loadImage = (f: File) => {
+    if (!f.type.startsWith("image/")) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const dataUrl = e.target?.result as string;
+      const mimeType = f.type === "image/png" ? "png" : "jpg";
+      setPendingImage({ dataUrl, mimeType });
+      setActiveTool("image");
+    };
+    reader.readAsDataURL(f);
+  };
+
   const onDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    setDragging(false);
+    e.preventDefault(); setDropDragging(false);
     const f = e.dataTransfer.files[0];
     if (f) loadFile(f);
   }, [loadFile]);
 
+  /* ── Page click: place text or image ── */
   const onPageClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (pending) { setPending(null); return; }
     const rect = e.currentTarget.getBoundingClientRect();
-    setPending({
-      x: e.clientX - rect.left,
-      y: e.clientY - rect.top,
-      kind: activeTool,
-    });
+    const cx = (e.clientX - rect.left) / displayScale;
+    const cy = (e.clientY - rect.top) / displayScale;
+
+    if (activeTool === "image" && pendingImage) {
+      setImages((prev) => [...prev, {
+        id: crypto.randomUUID(), pageIndex: currentPage,
+        dataUrl: pendingImage.dataUrl, mimeType: pendingImage.mimeType,
+        x: cx - 75, y: cy - 75, width: 150,
+      }]);
+      setPendingImage(null);
+      setActiveTool("text");
+      setDownloadUrl(null);
+      return;
+    }
+
+    if (activeTool === "text" || activeTool === "comment") {
+      if (pending) { setPending(null); return; }
+      setPending({ x: cx, y: cy, kind: activeTool });
+    }
   };
 
   const placeAnnotation = (text: string, color: string, fontSize: number) => {
     if (!pending) return;
-    setAnnotations((prev) => [
-      ...prev,
-      {
-        id: crypto.randomUUID(),
-        pageIndex: currentPage,
-        kind: pending.kind,
-        text,
-        x: pending.x,
-        y: pending.y,
-        color,
-        fontSize,
-      },
-    ]);
-    setPending(null);
-    setDownloadUrl(null);
+    setAnnotations((prev) => [...prev, { id: crypto.randomUUID(), pageIndex: currentPage, kind: pending.kind, text, x: pending.x, y: pending.y, color, fontSize }]);
+    setPending(null); setDownloadUrl(null);
   };
 
-  const removeAnnotation = (id: string) => {
-    setAnnotations((prev) => prev.filter((a) => a.id !== id));
-    setDownloadUrl(null);
-  };
+  const removeAnnotation = (id: string) => { setAnnotations((p) => p.filter((a) => a.id !== id)); setDownloadUrl(null); };
+  const removeImage = (id: string) => { setImages((p) => p.filter((i) => i.id !== id)); setDownloadUrl(null); };
+  const updateImage = (id: string, patch: Partial<ImageOverlay>) => setImages((p) => p.map((i) => i.id === id ? { ...i, ...patch } : i));
 
-  const hexToRgb = (hex: string) => {
-    const r = parseInt(hex.slice(1, 3), 16) / 255;
-    const g = parseInt(hex.slice(3, 5), 16) / 255;
-    const b = parseInt(hex.slice(5, 7), 16) / 255;
-    return rgb(r, g, b);
-  };
+  const hexToRgb = (hex: string) => rgb(parseInt(hex.slice(1, 3), 16) / 255, parseInt(hex.slice(3, 5), 16) / 255, parseInt(hex.slice(5, 7), 16) / 255);
 
+  /* ── Save PDF ── */
   const downloadEdited = async () => {
     if (!file) return;
     setDownloading(true);
@@ -224,68 +300,59 @@ export default function EditPage() {
       const font = await pdf.embedFont(StandardFonts.Helvetica);
       const pdfPages = pdf.getPages();
 
+      // Text / comment annotations
       for (const ann of annotations) {
-        const pg = pdfPages[ann.pageIndex];
-        const info = pages[ann.pageIndex];
+        const pg = pdfPages[ann.pageIndex]; const info = pages[ann.pageIndex];
         if (!pg || !info) continue;
-
         const xPt = ann.x / info.scale;
         const yPt = info.heightPt - (ann.y / info.scale) - ann.fontSize;
         const col = hexToRgb(ann.color);
-
         if (ann.kind === "comment") {
-          // Draw a small label box
           const lines = ann.text.split("\n");
           const boxW = Math.max(...lines.map((l) => l.length)) * ann.fontSize * 0.55 + 12;
           const boxH = lines.length * (ann.fontSize + 3) + 8;
-          pg.drawRectangle({
-            x: xPt,
-            y: yPt - (boxH - ann.fontSize - 4),
-            width: boxW,
-            height: boxH,
-            color: rgb(1, 1, 0.85),
-            borderColor: col,
-            borderWidth: 0.8,
-            opacity: 0.9,
-          });
-          lines.forEach((line, li) => {
-            pg.drawText(line, {
-              x: xPt + 6,
-              y: yPt - li * (ann.fontSize + 3),
-              size: ann.fontSize,
-              font,
-              color: col,
-            });
-          });
+          pg.drawRectangle({ x: xPt, y: yPt - (boxH - ann.fontSize - 4), width: boxW, height: boxH, color: rgb(1, 1, 0.85), borderColor: col, borderWidth: 0.8, opacity: 0.9 });
+          lines.forEach((line, li) => pg.drawText(line, { x: xPt + 6, y: yPt - li * (ann.fontSize + 3), size: ann.fontSize, font, color: col }));
         } else {
-          ann.text.split("\n").forEach((line, li) => {
-            pg.drawText(line, {
-              x: xPt,
-              y: yPt - li * (ann.fontSize + 3),
-              size: ann.fontSize,
-              font,
-              color: col,
-            });
-          });
+          ann.text.split("\n").forEach((line, li) => pg.drawText(line, { x: xPt, y: yPt - li * (ann.fontSize + 3), size: ann.fontSize, font, color: col }));
         }
       }
 
+      // Image overlays
+      for (const img of images) {
+        const pg = pdfPages[img.pageIndex]; const info = pages[img.pageIndex];
+        if (!pg || !info) continue;
+
+        const res  = await fetch(img.dataUrl);
+        const imgBuf = new Uint8Array(await res.arrayBuffer());
+        const embedded = img.mimeType === "png" ? await pdf.embedPng(imgBuf) : await pdf.embedJpg(imgBuf);
+
+        // Get natural aspect ratio
+        const { width: nW, height: nH } = embedded;
+        const widthPt  = img.width / info.scale;
+        const heightPt = widthPt * (nH / nW);
+        const xPt = img.x / info.scale;
+        const yPt = info.heightPt - (img.y / info.scale) - heightPt;
+
+        pg.drawImage(embedded, { x: xPt, y: yPt, width: widthPt, height: heightPt });
+      }
+
       const bytes = await pdf.save();
-      const blob = new Blob([new Uint8Array(bytes)], { type: "application/pdf" });
-      setDownloadUrl(URL.createObjectURL(blob));
-    } catch (err) {
-      console.error(err);
-    }
+      setDownloadUrl(URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: "application/pdf" })));
+    } catch (err) { console.error(err); }
     setDownloading(false);
   };
 
   const currentAnnotations = annotations.filter((a) => a.pageIndex === currentPage);
+  const currentImages      = images.filter((i) => i.pageIndex === currentPage);
   const pg = pages[currentPage];
+  const displayScale = pageRef.current && pg ? pageRef.current.offsetWidth / pg.widthPx : 1;
+  const hasEdits = annotations.length > 0 || images.length > 0;
 
-  // Compute display scale (container vs rendered resolution)
-  const displayScale = pageRef.current && pg
-    ? pageRef.current.offsetWidth / pg.widthPx
-    : 1;
+  const switchTool = (t: ActiveTool) => {
+    if (t === "image") { imageInputRef.current?.click(); return; }
+    setActiveTool(t); setPending(null); setPendingImage(null);
+  };
 
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100 flex flex-col">
@@ -307,36 +374,40 @@ export default function EditPage() {
             <div className="ml-auto flex items-center gap-2">
               {/* Tool switcher */}
               <div className="flex bg-gray-900 border border-gray-800 rounded-lg p-1 gap-1">
-                <button
-                  onClick={() => { setActiveTool("text"); setPending(null); }}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${activeTool === "text" ? "bg-red-600 text-white" : "text-gray-400 hover:text-gray-200"}`}
-                >
-                  <Type className="w-3.5 h-3.5" /> Text
-                </button>
-                <button
-                  onClick={() => { setActiveTool("comment"); setPending(null); }}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${activeTool === "comment" ? "bg-red-600 text-white" : "text-gray-400 hover:text-gray-200"}`}
-                >
-                  <MessageSquare className="w-3.5 h-3.5" /> Comment
-                </button>
+                {([
+                  { key: "text",    icon: Type,         label: "Text" },
+                  { key: "comment", icon: MessageSquare, label: "Comment" },
+                  { key: "image",   icon: ImageIcon,     label: "Image" },
+                ] as const).map(({ key, icon: Icon, label }) => (
+                  <button key={key}
+                    onClick={() => switchTool(key)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                      activeTool === key && key !== "image"
+                        ? "bg-red-600 text-white"
+                        : pendingImage && key === "image"
+                        ? "bg-red-600 text-white"
+                        : "text-gray-400 hover:text-gray-200"
+                    }`}
+                  >
+                    <Icon className="w-3.5 h-3.5" /> {label}
+                  </button>
+                ))}
               </div>
 
-              {annotations.length > 0 && !downloadUrl && (
-                <button
-                  onClick={downloadEdited}
-                  disabled={downloading}
-                  className="flex items-center gap-2 bg-green-600 hover:bg-green-500 disabled:opacity-40 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-                >
+              {/* Hidden image file input */}
+              <input ref={imageInputRef} type="file" accept="image/png,image/jpeg,image/jpg,image/webp"
+                className="hidden" onChange={(e) => e.target.files?.[0] && loadImage(e.target.files[0])} />
+
+              {hasEdits && !downloadUrl && (
+                <button onClick={downloadEdited} disabled={downloading}
+                  className="flex items-center gap-2 bg-green-600 hover:bg-green-500 disabled:opacity-40 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
                   {downloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
                   {downloading ? "Saving…" : "Save PDF"}
                 </button>
               )}
               {downloadUrl && (
-                <a
-                  href={downloadUrl}
-                  download={fileName.replace(".pdf", "-edited.pdf")}
-                  className="flex items-center gap-2 bg-green-600 hover:bg-green-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-                >
+                <a href={downloadUrl} download={fileName.replace(".pdf", "-edited.pdf")}
+                  className="flex items-center gap-2 bg-green-600 hover:bg-green-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
                   <Download className="w-4 h-4" /> Download
                 </a>
               )}
@@ -351,21 +422,16 @@ export default function EditPage() {
           <>
             <div className="text-center mb-10">
               <h1 className="text-3xl sm:text-4xl font-bold mb-3">Edit PDF Files</h1>
-              <p className="text-gray-400">Add text and comments directly onto your PDF pages.</p>
+              <p className="text-gray-400">Add text, comments, and images directly onto your PDF pages.</p>
             </div>
-            <div
-              onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
-              onDragLeave={() => setDragging(false)}
-              onDrop={onDrop}
+            <div onDragOver={(e) => { e.preventDefault(); setDropDragging(true); }}
+              onDragLeave={() => setDropDragging(false)} onDrop={onDrop}
               onClick={() => fileInputRef.current?.click()}
               className={`border-2 border-dashed rounded-2xl p-14 text-center cursor-pointer transition-all duration-200 ${
-                dragging ? "border-red-500 bg-red-500/10" : "border-gray-700 hover:border-gray-500 hover:bg-gray-900/50"
-              }`}
-            >
-              <Upload className={`w-12 h-12 mx-auto mb-4 ${dragging ? "text-red-400" : "text-gray-500"}`} />
-              <p className="text-gray-300 font-medium mb-1 text-lg">
-                {dragging ? "Drop your PDF here" : "Click or drag a PDF here"}
-              </p>
+                dropDragging ? "border-red-500 bg-red-500/10" : "border-gray-700 hover:border-gray-500 hover:bg-gray-900/50"
+              }`}>
+              <Upload className={`w-12 h-12 mx-auto mb-4 ${dropDragging ? "text-red-400" : "text-gray-500"}`} />
+              <p className="text-gray-300 font-medium mb-1 text-lg">{dropDragging ? "Drop your PDF here" : "Click or drag a PDF here"}</p>
               <p className="text-gray-500 text-sm">One PDF file at a time</p>
               <input ref={fileInputRef} type="file" accept="application/pdf" className="hidden"
                 onChange={(e) => e.target.files?.[0] && loadFile(e.target.files[0])} />
@@ -386,15 +452,12 @@ export default function EditPage() {
             {pages.length > 1 && (
               <div className="w-20 flex-shrink-0 flex flex-col gap-2 overflow-y-auto max-h-[80vh]">
                 {pages.map((p, i) => (
-                  <button
-                    key={i}
-                    onClick={() => { setCurrentPage(i); setPending(null); }}
-                    className={`relative rounded-lg overflow-hidden border-2 transition-all ${currentPage === i ? "border-red-500" : "border-gray-700 hover:border-gray-600"}`}
-                  >
+                  <button key={i} onClick={() => { setCurrentPage(i); setPending(null); }}
+                    className={`relative rounded-lg overflow-hidden border-2 transition-all ${currentPage === i ? "border-red-500" : "border-gray-700 hover:border-gray-600"}`}>
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={p.dataUrl} alt={`p${i + 1}`} className="w-full" />
                     <span className="absolute bottom-1 right-1 text-[10px] bg-black/60 text-white px-1 rounded">{i + 1}</span>
-                    {annotations.filter((a) => a.pageIndex === i).length > 0 && (
+                    {(annotations.some((a) => a.pageIndex === i) || images.some((im) => im.pageIndex === i)) && (
                       <span className="absolute top-1 right-1 w-3 h-3 bg-red-500 rounded-full" />
                     )}
                   </button>
@@ -407,9 +470,9 @@ export default function EditPage() {
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-2">
                   <span className="text-sm text-gray-400">Page {currentPage + 1} / {pages.length}</span>
-                  {currentAnnotations.length > 0 && (
+                  {(currentAnnotations.length + currentImages.length) > 0 && (
                     <span className="text-xs bg-red-900/40 border border-red-800 text-red-400 px-2 py-0.5 rounded-full">
-                      {currentAnnotations.length} edit{currentAnnotations.length !== 1 ? "s" : ""}
+                      {currentAnnotations.length + currentImages.length} edit{(currentAnnotations.length + currentImages.length) !== 1 ? "s" : ""}
                     </span>
                   )}
                 </div>
@@ -424,7 +487,7 @@ export default function EditPage() {
                       <ChevronRight className="w-5 h-5" />
                     </button>
                   </>)}
-                  <button onClick={() => { setFile(null); setPages([]); setAnnotations([]); setDownloadUrl(null); }}
+                  <button onClick={() => { setFile(null); setPages([]); setAnnotations([]); setImages([]); setDownloadUrl(null); }}
                     className="p-1.5 text-gray-500 hover:text-red-400 transition-colors ml-1">
                     <X className="w-5 h-5" />
                   </button>
@@ -433,69 +496,59 @@ export default function EditPage() {
 
               {/* Hint bar */}
               <div className="mb-2 text-xs text-gray-500 flex items-center gap-2">
-                {activeTool === "text"
-                  ? <><Type className="w-3.5 h-3.5 text-red-400" /> Click anywhere on the page to add text</>
-                  : <><MessageSquare className="w-3.5 h-3.5 text-red-400" /> Click anywhere on the page to add a comment</>
-                }
+                {activeTool === "text"    && <><Type className="w-3.5 h-3.5 text-red-400" /> Click on the page to add text</>}
+                {activeTool === "comment" && <><MessageSquare className="w-3.5 h-3.5 text-red-400" /> Click on the page to add a comment</>}
+                {activeTool === "image" && pendingImage && <><ImageIcon className="w-3.5 h-3.5 text-red-400 animate-pulse" /> Click on the page to place the image</>}
+                {activeTool === "image" && !pendingImage && <><ImageIcon className="w-3.5 h-3.5 text-gray-500" /> Click &ldquo;Image&rdquo; in the toolbar to upload an image</>}
               </div>
 
               {/* Page + overlays */}
               <div
                 ref={pageRef}
                 onClick={onPageClick}
-                className="relative rounded-xl overflow-hidden shadow-2xl border border-gray-700 cursor-crosshair"
+                className={`relative rounded-xl overflow-visible shadow-2xl border border-gray-700 ${
+                  pendingImage ? "cursor-crosshair" : "cursor-crosshair"
+                }`}
                 style={{ width: "100%", aspectRatio: pg ? `${pg.widthPx} / ${pg.heightPx}` : undefined }}
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                {pg && <img src={pg.dataUrl} alt="" className="w-full h-full object-contain" draggable={false} />}
+                {pg && <img src={pg.dataUrl} alt="" className="w-full h-full object-contain rounded-xl" draggable={false} />}
 
-                {/* Annotations overlay */}
+                {/* Text / comment annotations */}
                 {currentAnnotations.map((ann) => (
-                  <div
-                    key={ann.id}
-                    className="absolute group"
+                  <div key={ann.id} className="absolute group"
                     style={{ left: ann.x * displayScale, top: ann.y * displayScale }}
-                    onClick={(e) => e.stopPropagation()}
-                  >
+                    onClick={(e) => e.stopPropagation()}>
                     {ann.kind === "comment" ? (
-                      <div
-                        className="rounded-lg border px-2 py-1 text-xs max-w-[200px] whitespace-pre-wrap shadow"
-                        style={{
-                          background: "rgba(254,252,196,0.92)",
-                          borderColor: ann.color,
-                          color: ann.color,
-                          fontSize: ann.fontSize * displayScale,
-                          lineHeight: 1.4,
-                        }}
-                      >
+                      <div className="rounded-lg border px-2 py-1 text-xs max-w-[200px] whitespace-pre-wrap shadow"
+                        style={{ background: "rgba(254,252,196,0.92)", borderColor: ann.color, color: ann.color, fontSize: ann.fontSize * displayScale, lineHeight: 1.4 }}>
                         {ann.text}
                       </div>
                     ) : (
-                      <span
-                        className="whitespace-pre-wrap leading-tight"
-                        style={{ color: ann.color, fontSize: ann.fontSize * displayScale }}
-                      >
+                      <span className="whitespace-pre-wrap leading-tight"
+                        style={{ color: ann.color, fontSize: ann.fontSize * displayScale }}>
                         {ann.text}
                       </span>
                     )}
-                    <button
-                      onClick={() => removeAnnotation(ann.id)}
-                      className="absolute -top-2 -right-2 w-4 h-4 bg-red-500 rounded-full items-center justify-center hidden group-hover:flex"
-                    >
+                    <button onClick={() => removeAnnotation(ann.id)}
+                      className="absolute -top-2 -right-2 w-4 h-4 bg-red-500 rounded-full items-center justify-center hidden group-hover:flex">
                       <X className="w-2.5 h-2.5 text-white" />
                     </button>
                   </div>
                 ))}
 
-                {/* Pending popup */}
+                {/* Image overlays */}
+                {currentImages.map((img) => (
+                  <ImageOverlayEl key={img.id} overlay={img} displayScale={displayScale}
+                    onRemove={() => removeImage(img.id)}
+                    onUpdate={(patch) => updateImage(img.id, patch)} />
+                ))}
+
+                {/* Text popup */}
                 {pending && (
                   <TextPopup
-                    x={pending.x * displayScale}
-                    y={pending.y * displayScale}
-                    kind={pending.kind}
-                    onConfirm={placeAnnotation}
-                    onCancel={() => setPending(null)}
-                  />
+                    x={pending.x * displayScale} y={pending.y * displayScale}
+                    kind={pending.kind} onConfirm={placeAnnotation} onCancel={() => setPending(null)} />
                 )}
               </div>
 
@@ -508,12 +561,14 @@ export default function EditPage() {
           </div>
         )}
 
-        {/* Annotation list */}
-        {annotations.length > 0 && (
+        {/* Edits list */}
+        {hasEdits && (
           <div className="mt-8 border-t border-gray-800 pt-5">
             <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm text-gray-400 font-medium">All edits ({annotations.length})</h3>
-              <button onClick={() => { setAnnotations([]); setDownloadUrl(null); }}
+              <h3 className="text-sm text-gray-400 font-medium">
+                All edits ({annotations.length + images.length})
+              </h3>
+              <button onClick={() => { setAnnotations([]); setImages([]); setDownloadUrl(null); }}
                 className="text-xs text-gray-500 hover:text-red-400 flex items-center gap-1 transition-colors">
                 <Trash2 className="w-3 h-3" /> Remove all
               </button>
@@ -521,15 +576,20 @@ export default function EditPage() {
             <div className="flex flex-col gap-1.5">
               {annotations.map((ann) => (
                 <div key={ann.id} className="flex items-center gap-3 bg-gray-900 border border-gray-800 rounded-lg px-3 py-2">
-                  {ann.kind === "comment"
-                    ? <MessageSquare className="w-3.5 h-3.5 flex-shrink-0" style={{ color: ann.color }} />
-                    : <Type className="w-3.5 h-3.5 flex-shrink-0" style={{ color: ann.color }} />}
+                  {ann.kind === "comment" ? <MessageSquare className="w-3.5 h-3.5 flex-shrink-0" style={{ color: ann.color }} /> : <Type className="w-3.5 h-3.5 flex-shrink-0" style={{ color: ann.color }} />}
                   <span className="text-xs text-gray-400 flex-shrink-0">p.{ann.pageIndex + 1}</span>
                   <span className="text-xs text-gray-300 truncate flex-1">{ann.text}</span>
-                  <button onClick={() => removeAnnotation(ann.id)}
-                    className="text-gray-600 hover:text-red-400 transition-colors flex-shrink-0">
-                    <X className="w-3.5 h-3.5" />
-                  </button>
+                  <button onClick={() => removeAnnotation(ann.id)} className="text-gray-600 hover:text-red-400 transition-colors flex-shrink-0"><X className="w-3.5 h-3.5" /></button>
+                </div>
+              ))}
+              {images.map((img) => (
+                <div key={img.id} className="flex items-center gap-3 bg-gray-900 border border-gray-800 rounded-lg px-3 py-2">
+                  <ImageIcon className="w-3.5 h-3.5 flex-shrink-0 text-red-400" />
+                  <span className="text-xs text-gray-400 flex-shrink-0">p.{img.pageIndex + 1}</span>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={img.dataUrl} alt="img" className="h-5 w-10 object-contain rounded flex-shrink-0" />
+                  <span className="text-xs text-gray-500 truncate flex-1">{img.mimeType.toUpperCase()} · {img.width}px</span>
+                  <button onClick={() => removeImage(img.id)} className="text-gray-600 hover:text-red-400 transition-colors flex-shrink-0"><X className="w-3.5 h-3.5" /></button>
                 </div>
               ))}
             </div>
