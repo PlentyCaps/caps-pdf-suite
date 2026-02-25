@@ -104,18 +104,20 @@ function TextPopup({ x, y, kind, onConfirm, onCancel }: {
 
 /* ─── Image overlay ───────────────────────────────────── */
 function ImageOverlayEl({
-  overlay, displayScale, onRemove, onUpdate,
+  overlay, displayScale, onRemove, onUpdate, selected, onSelect,
 }: {
   overlay: ImageOverlay;
   displayScale: number;
   onRemove: () => void;
   onUpdate: (patch: Partial<ImageOverlay>) => void;
+  selected: boolean;
+  onSelect: () => void;
 }) {
-  const [hovered, setHovered] = useState(false);
   const dragStart = useRef<{ mx: number; my: number; ox: number; oy: number } | null>(null);
 
   const onMouseDown = (e: React.MouseEvent) => {
     e.stopPropagation();
+    onSelect();
     dragStart.current = { mx: e.clientX, my: e.clientY, ox: overlay.x, oy: overlay.y };
 
     const onMove = (ev: MouseEvent) => {
@@ -130,15 +132,13 @@ function ImageOverlayEl({
   };
 
   const dispW = overlay.width * displayScale;
-  const dispH = dispW; // preserve square-ish; actual aspect corrected by object-contain
 
   return (
+    /* Outer wrapper includes the slider area so mouse stays "inside" */
     <div
-      className="absolute select-none group"
-      style={{ left: overlay.x * displayScale, top: overlay.y * displayScale, width: dispW, zIndex: 20 }}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      onClick={(e) => e.stopPropagation()}
+      className="absolute select-none"
+      style={{ left: overlay.x * displayScale, top: overlay.y * displayScale, width: dispW, zIndex: 20, paddingBottom: selected ? 36 : 0 }}
+      onClick={(e) => { e.stopPropagation(); onSelect(); }}
     >
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
@@ -149,21 +149,23 @@ function ImageOverlayEl({
         style={{ display: "block" }}
       />
 
-      {/* Drag handle */}
+      {/* Drag + border overlay */}
       <div
         onMouseDown={onMouseDown}
-        className={`absolute inset-0 cursor-move border-2 rounded transition-opacity ${hovered ? "border-red-500/70 opacity-100" : "border-transparent opacity-0"}`}
+        className={`absolute top-0 left-0 right-0 cursor-move border-2 rounded transition-colors ${selected ? "border-red-500/80" : "border-transparent hover:border-red-400/50"}`}
+        style={{ bottom: selected ? 36 : 0 }}
       >
-        {hovered && (
-          <div className="absolute top-1 left-1 bg-black/50 rounded p-0.5">
+        {selected && (
+          <div className="absolute top-1 left-1 bg-black/50 rounded p-0.5 pointer-events-none">
             <Move className="w-3 h-3 text-white" />
           </div>
         )}
       </div>
 
-      {/* Delete */}
-      {hovered && (
+      {/* Delete button */}
+      {selected && (
         <button
+          onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => { e.stopPropagation(); onRemove(); }}
           className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 hover:bg-red-400 rounded-full flex items-center justify-center shadow"
         >
@@ -171,10 +173,11 @@ function ImageOverlayEl({
         </button>
       )}
 
-      {/* Resize slider */}
-      {hovered && (
+      {/* Resize slider — inside the padded wrapper, always reachable */}
+      {selected && (
         <div
-          className="absolute -bottom-8 left-0 right-0 flex items-center gap-1 bg-black/70 rounded-lg px-2 py-1"
+          className="absolute bottom-0 left-0 right-0 flex items-center gap-1.5 bg-black/75 rounded-b-lg px-2 py-1.5"
+          onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
         >
           <span className="text-[9px] text-gray-400 flex-shrink-0">Size</span>
@@ -182,8 +185,9 @@ function ImageOverlayEl({
             type="range" min={30} max={600} step={5}
             value={overlay.width}
             onChange={(e) => onUpdate({ width: Number(e.target.value) })}
-            className="flex-1 accent-red-500 h-1 cursor-pointer"
+            className="flex-1 accent-red-500 cursor-pointer"
           />
+          <span className="text-[9px] text-gray-500 flex-shrink-0">{overlay.width}px</span>
         </div>
       )}
     </div>
@@ -203,6 +207,7 @@ export default function EditPage() {
   const [pending, setPending]     = useState<{ x: number; y: number; kind: AnnotKind } | null>(null);
   const [activeTool, setActiveTool] = useState<ActiveTool>("text");
   const [pendingImage, setPendingImage] = useState<{ dataUrl: string; mimeType: "png" | "jpg" } | null>(null);
+  const [selectedImageId, setSelectedImageId] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const fileInputRef  = useRef<HTMLInputElement>(null);
@@ -256,6 +261,9 @@ export default function EditPage() {
 
   /* ── Page click: place text or image ── */
   const onPageClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    // Deselect any selected image when clicking page background
+    setSelectedImageId(null);
+
     const rect = e.currentTarget.getBoundingClientRect();
     const cx = (e.clientX - rect.left) / displayScale;
     const cy = (e.clientY - rect.top) / displayScale;
@@ -285,7 +293,7 @@ export default function EditPage() {
   };
 
   const removeAnnotation = (id: string) => { setAnnotations((p) => p.filter((a) => a.id !== id)); setDownloadUrl(null); };
-  const removeImage = (id: string) => { setImages((p) => p.filter((i) => i.id !== id)); setDownloadUrl(null); };
+  const removeImage = (id: string) => { setImages((p) => p.filter((i) => i.id !== id)); setSelectedImageId(null); setDownloadUrl(null); };
   const updateImage = (id: string, patch: Partial<ImageOverlay>) => setImages((p) => p.map((i) => i.id === id ? { ...i, ...patch } : i));
 
   const hexToRgb = (hex: string) => rgb(parseInt(hex.slice(1, 3), 16) / 255, parseInt(hex.slice(3, 5), 16) / 255, parseInt(hex.slice(5, 7), 16) / 255);
@@ -540,6 +548,8 @@ export default function EditPage() {
                 {/* Image overlays */}
                 {currentImages.map((img) => (
                   <ImageOverlayEl key={img.id} overlay={img} displayScale={displayScale}
+                    selected={selectedImageId === img.id}
+                    onSelect={() => setSelectedImageId(img.id)}
                     onRemove={() => removeImage(img.id)}
                     onUpdate={(patch) => updateImage(img.id, patch)} />
                 ))}
