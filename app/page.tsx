@@ -31,7 +31,7 @@ const features = [
     title: "Compress PDFs",
     description: "Reduce file size without sacrificing quality. Share faster, store smarter.",
     color: "from-orange-500 to-orange-600",
-    href: null,
+    href: "/compress",
   },
   {
     icon: Edit3,
