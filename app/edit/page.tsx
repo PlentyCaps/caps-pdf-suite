@@ -5,7 +5,7 @@ import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import {
   Edit3, Upload, X, Download, ArrowLeft, ChevronLeft,
   ChevronRight, Loader2, CheckCircle, MessageSquare, Type,
-  Trash2, ImageIcon, Move,
+  Trash2, ImageIcon, Move, FileText,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -363,12 +363,16 @@ export default function EditPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-950 text-gray-100 flex flex-col">
+    <div className="min-h-screen bg-gray-950 text-gray-100 flex flex-col [background-image:radial-gradient(circle,#1e293b_1px,transparent_1px)] [background-size:28px_28px]">
       {/* Navbar */}
-      <nav className="border-b border-gray-800 bg-gray-950/80 backdrop-blur-md sticky top-0 z-40">
+      <nav className="border-b border-gray-800 bg-gray-950/90 backdrop-blur-md sticky top-0 z-40">
         <div className="max-w-5xl mx-auto px-6 h-16 flex items-center gap-4">
-          <Link href="/" className="flex items-center gap-2 text-gray-400 hover:text-white transition-colors text-sm">
-            <ArrowLeft className="w-4 h-4" /> Back
+          <Link href="/" className="flex items-center gap-2 text-gray-400 hover:text-white transition-colors text-sm group">
+            <div className="w-6 h-6 bg-gradient-to-br from-red-500 to-orange-500 rounded flex items-center justify-center shadow-sm">
+              <FileText className="w-3 h-3 text-white" />
+            </div>
+            <ArrowLeft className="w-4 h-4" />
+            <span>Back</span>
           </Link>
           <div className="w-px h-5 bg-gray-800" />
           <div className="flex items-center gap-2">
